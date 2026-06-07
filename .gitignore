@@ -1,0 +1,7 @@
+dist
+node_modules
+uploads
+outputs
+redis_data
+.env
+data
