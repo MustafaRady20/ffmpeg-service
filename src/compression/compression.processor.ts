@@ -21,12 +21,13 @@ export class CompressionProcessor extends WorkerHost {
 
   async process(job: Job<CompressionJobData>): Promise<CompressionJobResult> {
     const { inputPath, originalName } = job.data;
-
     this.logger.log(`[job ${job.id}] starting encode for ${originalName}`);
 
     let outputPath: string;
     try {
-      outputPath = await this.compression.compress(inputPath);
+      outputPath = await this.compression.compress(inputPath, (pct) =>
+        job.updateProgress(pct),
+      );
     } catch (err) {
       await unlink(inputPath).catch(() => undefined);
       throw err;

@@ -14,11 +14,11 @@ RUN npm install
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-ENV PORT=3000 \
+ENV PORT=7000 \
     UPLOAD_DIR=/data/uploads \
     OUTPUT_DIR=/data/outputs
 
 RUN mkdir -p /data/uploads /data/outputs
 
-EXPOSE 3000
+EXPOSE 7000
 CMD ["node", "dist/main"]

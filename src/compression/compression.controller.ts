@@ -28,7 +28,7 @@ import {
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/tmp/uploads';
 const MAX_UPLOAD_BYTES = Number(
-  process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024, // 5 GB
+  process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024,
 );
 
 @Controller()
@@ -88,6 +88,7 @@ export class CompressionController {
 
     const state = await job.getState();
     const response: Record<string, unknown> = { jobId: id, status: state };
+    if (state === 'active') response.progress = job.progress;
     if (state === 'failed') response.failedReason = job.failedReason;
     return response;
   }
@@ -116,12 +117,11 @@ export class CompressionController {
     });
 
     const stream = createReadStream(servePath);
-    const cleanup = () => {
+    stream.on('close', () => {
       unlink(servePath).catch(() => undefined);
       unlink(discardPath).catch(() => undefined);
-    };
-    stream.on('end', cleanup);
-    stream.on('error', cleanup);
+      job.remove().catch(() => undefined);
+    });
 
     return new StreamableFile(stream);
   }
