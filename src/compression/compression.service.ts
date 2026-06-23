@@ -29,10 +29,12 @@ export class CompressionService {
   ): Promise<string> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
+    const isNvenc = VCODEC.includes('nvenc');
     const args = [
       '-i', inputPath,
       '-c:v', VCODEC,
-      '-crf', CRF,
+      // NVENC uses rate-control + constant-quality instead of -crf
+      ...(isNvenc ? ['-rc:v', 'vbr', '-cq', CRF] : ['-crf', CRF]),
       '-preset', PRESET,
       '-c:a', 'aac',
       '-b:a', ABITRATE,

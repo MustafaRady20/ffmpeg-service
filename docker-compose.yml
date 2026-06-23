@@ -10,6 +10,13 @@ services:
     volumes:
       - uploads:/data/uploads
       - outputs:/data/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       redis:
         condition: service_healthy
