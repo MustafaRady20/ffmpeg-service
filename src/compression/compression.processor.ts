@@ -20,13 +20,15 @@ export class CompressionProcessor extends WorkerHost {
   }
 
   async process(job: Job<CompressionJobData>): Promise<CompressionJobResult> {
-    const { inputPath, originalName } = job.data;
+    const { inputPath, originalName, generateSubtitles } = job.data;
     this.logger.log(`[job ${job.id}] starting encode for ${originalName}`);
 
     let outputPath: string;
     try {
-      outputPath = await this.compression.compress(inputPath, (pct) =>
-        job.updateProgress(pct),
+      outputPath = await this.compression.compress(
+        inputPath,
+        generateSubtitles ?? false,
+        (pct: number) => job.updateProgress(pct),
       );
     } catch (err) {
       await unlink(inputPath).catch(() => undefined);
@@ -38,9 +40,12 @@ export class CompressionProcessor extends WorkerHost {
       stat(outputPath),
     ]);
 
-    const servePath = outStat.size < inStat.size ? outputPath : inputPath;
-    const discardPath = servePath === outputPath ? inputPath : outputPath;
-    const serveSize = servePath === outputPath ? outStat.size : inStat.size;
+    // If subtitles were generated the output always wins (it has the subtitle track).
+    // Otherwise pick whichever file is smaller.
+    const useOutput = generateSubtitles || outStat.size < inStat.size;
+    const servePath = useOutput ? outputPath : inputPath;
+    const discardPath = useOutput ? inputPath : outputPath;
+    const serveSize = useOutput ? outStat.size : inStat.size;
 
     this.logger.log(
       `[job ${job.id}] done — serving ${servePath} (${serveSize} bytes)`,

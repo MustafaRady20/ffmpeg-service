@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -68,6 +69,7 @@ export class CompressionController {
   )
   async enqueue(
     @UploadedFile() file: Express.Multer.File,
+    @Body('generateSubtitles') generateSubtitles?: string,
   ): Promise<{ jobId: string }> {
     if (!file) {
       throw new BadRequestException('No file uploaded under form field "video"');
@@ -76,6 +78,7 @@ export class CompressionController {
     const job = await this.queue.add('compress', {
       inputPath: file.path,
       originalName: file.originalname,
+      generateSubtitles: generateSubtitles === 'true',
     });
 
     return { jobId: job.id! };

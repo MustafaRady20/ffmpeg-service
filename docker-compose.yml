@@ -10,6 +10,7 @@ services:
     volumes:
       - uploads:/data/uploads
       - outputs:/data/outputs
+      - huggingface_cache:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -38,3 +39,4 @@ volumes:
   uploads:
   outputs:
   redis_data:
+  huggingface_cache:

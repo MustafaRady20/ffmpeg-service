@@ -5,7 +5,8 @@ import {
 } from '@nestjs/common';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { join } from 'path';
+import { unlink } from 'fs/promises';
+import { join, resolve } from 'path';
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? '/tmp/outputs';
 const CRF = process.env.FFMPEG_CRF ?? '28';
@@ -25,6 +26,7 @@ export class CompressionService {
 
   async compress(
     inputPath: string,
+    generateSubtitles = false,
     onProgress?: (pct: number) => void,
   ): Promise<string> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
@@ -33,7 +35,6 @@ export class CompressionService {
     const args = [
       '-i', inputPath,
       '-c:v', VCODEC,
-      // NVENC uses rate-control + constant-quality instead of -crf
       ...(isNvenc ? ['-rc:v', 'vbr', '-cq', CRF] : ['-crf', CRF]),
       '-preset', PRESET,
       '-c:a', 'aac',
@@ -44,8 +45,81 @@ export class CompressionService {
     ];
 
     this.logger.log(`Encoding ${inputPath} -> ${outputPath}`);
+    await this.runFfmpeg(args, onProgress);
 
-    await new Promise<void>((resolve, reject) => {
+    if (generateSubtitles) {
+      try {
+        return await this.addGeneratedSubtitles(outputPath);
+      } catch (err) {
+        this.logger.warn(
+          `Subtitle generation failed, returning video without subtitles: ${err}`,
+        );
+      }
+    }
+
+    return outputPath;
+  }
+
+  private async addGeneratedSubtitles(videoPath: string): Promise<string> {
+    const audioPath = join(OUTPUT_DIR, `${randomUUID()}.mp3`);
+    const srtPath   = join(OUTPUT_DIR, `${randomUUID()}.srt`);
+    const finalPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
+
+    try {
+      this.logger.log('Extracting audio for transcription…');
+      await this.runFfmpeg([
+        '-i', videoPath,
+        '-vn', '-ar', '16000', '-ac', '1', '-b:a', '16k',
+        '-y', audioPath,
+      ]);
+
+      this.logger.log('Transcribing audio with local Whisper…');
+      await this.runWhisper(audioPath, srtPath);
+
+      this.logger.log('Muxing subtitle track into video…');
+      await this.runFfmpeg([
+        '-i', videoPath,
+        '-i', srtPath,
+        '-c:v', 'copy',
+        '-c:a', 'copy',
+        '-c:s', 'mov_text',
+        '-y', finalPath,
+      ]);
+
+      await unlink(videoPath).catch(() => undefined);
+      return finalPath;
+    } finally {
+      await unlink(audioPath).catch(() => undefined);
+      await unlink(srtPath).catch(() => undefined);
+    }
+  }
+
+  private runWhisper(audioPath: string, srtPath: string): Promise<void> {
+    const model = process.env.WHISPER_MODEL ?? 'small';
+    const script = resolve(__dirname, '../../scripts/whisper_srt.py');
+
+    return new Promise<void>((resolve, reject) => {
+      const py = spawn('python3', [script, audioPath, srtPath, model]);
+
+      let stderr = '';
+      py.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      py.stdout.on('data', (chunk: Buffer) => { this.logger.log(chunk.toString().trim()); });
+
+      py.on('error', (err) =>
+        reject(new Error(`Could not start Python: ${err.message}`)),
+      );
+      py.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Whisper exited ${code}: ${stderr.slice(-500)}`));
+      });
+    });
+  }
+
+  private runFfmpeg(
+    args: string[],
+    onProgress?: (pct: number) => void,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const ff = spawn('ffmpeg', args);
 
       let stderrBuf = '';
@@ -106,7 +180,5 @@ export class CompressionService {
         );
       });
     });
-
-    return outputPath;
   }
 }

@@ -3,6 +3,7 @@ export const COMPRESSION_QUEUE = 'compression';
 export interface CompressionJobData {
   inputPath: string;
   originalName: string;
+  generateSubtitles?: boolean;
 }
 
 export interface CompressionJobResult {
