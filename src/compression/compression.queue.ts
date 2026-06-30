@@ -11,4 +11,5 @@ export interface CompressionJobResult {
   discardPath: string;
   serveSize: number;
   originalName: string;
+  subtitlePath?: string;
 }

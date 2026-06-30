@@ -23,9 +23,9 @@ export class CompressionProcessor extends WorkerHost {
     const { inputPath, originalName, generateSubtitles } = job.data;
     this.logger.log(`[job ${job.id}] starting encode for ${originalName}`);
 
-    let outputPath: string;
+    let result: { outputPath: string; subtitlePath?: string };
     try {
-      outputPath = await this.compression.compress(
+      result = await this.compression.compress(
         inputPath,
         generateSubtitles ?? false,
         (pct: number) => job.updateProgress(pct),
@@ -35,6 +35,7 @@ export class CompressionProcessor extends WorkerHost {
       throw err;
     }
 
+    const { outputPath, subtitlePath } = result;
     const [inStat, outStat] = await Promise.all([
       stat(inputPath),
       stat(outputPath),
@@ -51,6 +52,6 @@ export class CompressionProcessor extends WorkerHost {
       `[job ${job.id}] done — serving ${servePath} (${serveSize} bytes)`,
     );
 
-    return { servePath, discardPath, serveSize, originalName };
+    return { servePath, discardPath, serveSize, originalName, subtitlePath };
   }
 }

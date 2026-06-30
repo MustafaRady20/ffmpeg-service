@@ -109,7 +109,7 @@ export class CompressionController {
       throw new BadRequestException(`Job is not ready (status: ${state})`);
     }
 
-    const { servePath, discardPath, serveSize, originalName } =
+    const { servePath, discardPath, serveSize, originalName, subtitlePath } =
       job.returnvalue as CompressionJobResult;
 
     const baseName = originalName.replace(/\.[^.]+$/, '');
@@ -123,9 +123,36 @@ export class CompressionController {
     stream.on('close', () => {
       unlink(servePath).catch(() => undefined);
       unlink(discardPath).catch(() => undefined);
+      if (subtitlePath) unlink(subtitlePath).catch(() => undefined);
       job.remove().catch(() => undefined);
     });
 
     return new StreamableFile(stream);
+  }
+
+  @Get('jobs/:id/subtitle')
+  async subtitle(
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const job = await this.queue.getJob(id);
+    if (!job) throw new NotFoundException(`Job ${id} not found`);
+
+    const state = await job.getState();
+    if (state !== 'completed') {
+      throw new BadRequestException(`Job is not ready (status: ${state})`);
+    }
+
+    const { subtitlePath } = job.returnvalue as CompressionJobResult;
+    if (!subtitlePath) {
+      throw new NotFoundException('No subtitle was generated for this job');
+    }
+
+    res.set({
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="subtitle.srt"',
+    });
+
+    return new StreamableFile(createReadStream(subtitlePath));
   }
 }

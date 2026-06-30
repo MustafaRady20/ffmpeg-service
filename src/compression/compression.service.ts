@@ -28,7 +28,7 @@ export class CompressionService {
     inputPath: string,
     generateSubtitles = false,
     onProgress?: (pct: number) => void,
-  ): Promise<string> {
+  ): Promise<{ outputPath: string; subtitlePath?: string }> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
     const isNvenc = VCODEC.includes('nvenc');
@@ -57,10 +57,10 @@ export class CompressionService {
       }
     }
 
-    return outputPath;
+    return { outputPath };
   }
 
-  private async addGeneratedSubtitles(videoPath: string): Promise<string> {
+  private async addGeneratedSubtitles(videoPath: string): Promise<{ outputPath: string; subtitlePath: string }> {
     const audioPath = join(OUTPUT_DIR, `${randomUUID()}.mp3`);
     const srtPath   = join(OUTPUT_DIR, `${randomUUID()}.srt`);
     const finalPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
@@ -87,10 +87,13 @@ export class CompressionService {
       ]);
 
       await unlink(videoPath).catch(() => undefined);
-      return finalPath;
+      // srtPath is intentionally kept — caller will serve and clean it up
+      return { outputPath: finalPath, subtitlePath: srtPath };
+    } catch (err) {
+      await unlink(srtPath).catch(() => undefined);
+      throw err;
     } finally {
       await unlink(audioPath).catch(() => undefined);
-      await unlink(srtPath).catch(() => undefined);
     }
   }
 
