@@ -20,7 +20,7 @@ export class CompressionProcessor extends WorkerHost {
   }
 
   async process(job: Job<CompressionJobData>): Promise<CompressionJobResult> {
-    const { inputPath, originalName, generateSubtitles } = job.data;
+    const { inputPath, originalName, generateSubtitles, subtitleLanguage } = job.data;
     this.logger.log(`[job ${job.id}] starting encode for ${originalName}`);
 
     let result: { outputPath: string; subtitlePath?: string };
@@ -29,6 +29,7 @@ export class CompressionProcessor extends WorkerHost {
         inputPath,
         generateSubtitles ?? false,
         (pct: number) => job.updateProgress(pct),
+        subtitleLanguage,
       );
     } catch (err) {
       await unlink(inputPath).catch(() => undefined);

@@ -4,6 +4,7 @@ export interface CompressionJobData {
   inputPath: string;
   originalName: string;
   generateSubtitles?: boolean;
+  subtitleLanguage?: string;
 }
 
 export interface CompressionJobResult {

@@ -28,6 +28,7 @@ export class CompressionService {
     inputPath: string,
     generateSubtitles = false,
     onProgress?: (pct: number) => void,
+    subtitleLanguage?: string,
   ): Promise<{ outputPath: string; subtitlePath?: string }> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
@@ -49,7 +50,7 @@ export class CompressionService {
 
     if (generateSubtitles) {
       try {
-        return await this.addGeneratedSubtitles(outputPath);
+        return await this.addGeneratedSubtitles(outputPath, subtitleLanguage);
       } catch (err) {
         this.logger.warn(
           `Subtitle generation failed, returning video without subtitles: ${err}`,
@@ -60,7 +61,7 @@ export class CompressionService {
     return { outputPath };
   }
 
-  private async addGeneratedSubtitles(videoPath: string): Promise<{ outputPath: string; subtitlePath: string }> {
+  private async addGeneratedSubtitles(videoPath: string, targetLanguage?: string): Promise<{ outputPath: string; subtitlePath: string }> {
     const audioPath = join(OUTPUT_DIR, `${randomUUID()}.mp3`);
     const srtPath   = join(OUTPUT_DIR, `${randomUUID()}.srt`);
     const finalPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
@@ -74,7 +75,7 @@ export class CompressionService {
       ]);
 
       this.logger.log('Transcribing audio with local Whisper…');
-      await this.runWhisper(audioPath, srtPath);
+      await this.runWhisper(audioPath, srtPath, targetLanguage);
 
       this.logger.log('Muxing subtitle track into video…');
       await this.runFfmpeg([
@@ -97,12 +98,13 @@ export class CompressionService {
     }
   }
 
-  private runWhisper(audioPath: string, srtPath: string): Promise<void> {
+  private runWhisper(audioPath: string, srtPath: string, targetLanguage?: string): Promise<void> {
     const model = process.env.WHISPER_MODEL ?? 'small';
     const script = resolve(__dirname, '../../scripts/whisper_srt.py');
+    const args = [script, audioPath, srtPath, model, ...(targetLanguage ? [targetLanguage] : [])];
 
     return new Promise<void>((resolve, reject) => {
-      const py = spawn('python3', [script, audioPath, srtPath, model]);
+      const py = spawn('python3', args);
 
       let stderr = '';
       py.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
