@@ -19,5 +19,11 @@ ENV PORT=7000 \
 
 RUN mkdir -p /data/uploads /data/outputs
 
+# Argostranslate stores downloaded language packages here.
+# Mount a named volume at this path so packages survive container restarts.
+VOLUME ["/root/.local/share/argos-translate"]
+
 EXPOSE 7000
-CMD ["node", "dist/main"]
+# preload.py warms the Whisper model and any ARGOS_PACKAGES before the
+# Node service starts accepting requests.
+CMD ["sh", "-c", "python3 /app/scripts/preload.py && node dist/main"]

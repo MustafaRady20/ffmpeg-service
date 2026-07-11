@@ -11,6 +11,7 @@ services:
       - uploads:/data/uploads
       - outputs:/data/outputs
       - huggingface_cache:/root/.cache/huggingface
+      - argos_packages:/root/.local/share/argos-translate
     deploy:
       resources:
         reservations:
@@ -40,3 +41,4 @@ volumes:
   outputs:
   redis_data:
   huggingface_cache:
+  argos_packages:

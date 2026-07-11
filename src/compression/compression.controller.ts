@@ -125,8 +125,10 @@ export class CompressionController {
     stream.on('close', () => {
       unlink(servePath).catch(() => undefined);
       unlink(discardPath).catch(() => undefined);
-      if (subtitlePath) unlink(subtitlePath).catch(() => undefined);
-      job.remove().catch(() => undefined);
+      // Only remove the job (and subtitle file) here when there is no subtitle
+      // to download separately. If a subtitle exists, the subtitle endpoint
+      // owns the final cleanup so it remains accessible after this download.
+      if (!subtitlePath) job.remove().catch(() => undefined);
     });
 
     return new StreamableFile(stream);
@@ -155,6 +157,12 @@ export class CompressionController {
       'Content-Disposition': 'attachment; filename="subtitle.srt"',
     });
 
-    return new StreamableFile(createReadStream(subtitlePath));
+    const srtStream = createReadStream(subtitlePath);
+    srtStream.on('close', () => {
+      unlink(subtitlePath).catch(() => undefined);
+      job.remove().catch(() => undefined);
+    });
+
+    return new StreamableFile(srtStream);
   }
 }

@@ -69,20 +69,26 @@ def main():
     target_lang = sys.argv[4] if len(sys.argv) > 4 else None
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    segments, info = model.transcribe(audio_path, beam_size=5)
+
+    # Use Whisper's built-in translation when the target is English — avoids
+    # an argostranslate runtime download and produces higher-quality output.
+    whisper_task = "translate" if target_lang == "en" else "transcribe"
+    segments, info = model.transcribe(audio_path, beam_size=5, task=whisper_task)
     segments = list(segments)  # consume generator before opening file
 
     source_lang = info.language
-    print(f"Detected language: {source_lang}", file=sys.stderr)
+    print(f"Detected language: {source_lang} (task={whisper_task})", file=sys.stderr)
 
-    if target_lang and target_lang != source_lang:
+    # For non-English targets we still need argostranslate.
+    needs_argos = target_lang and target_lang != "en" and target_lang != source_lang
+    if needs_argos:
         print(f"Translating {source_lang} -> {target_lang}…", file=sys.stderr)
         ensure_argos_package(source_lang, target_lang)
 
     with open(output_path, "w", encoding="utf-8") as f:
         for i, seg in enumerate(segments, 1):
             text = seg.text.strip()
-            if target_lang and target_lang != source_lang:
+            if needs_argos:
                 text = translate_text(text, source_lang, target_lang)
             f.write(f"{i}\n")
             f.write(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n")
