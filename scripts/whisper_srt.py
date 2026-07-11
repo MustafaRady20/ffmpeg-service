@@ -73,7 +73,18 @@ def main():
     # Use Whisper's built-in translation when the target is English — avoids
     # an argostranslate runtime download and produces higher-quality output.
     whisper_task = "translate" if target_lang == "en" else "transcribe"
-    segments, info = model.transcribe(audio_path, beam_size=5, task=whisper_task)
+    segments, info = model.transcribe(
+        audio_path,
+        beam_size=5,
+        task=whisper_task,
+        # vad_filter removes silence / noise between speakers so Whisper doesn't
+        # waste segments on gaps or produce noise-only tokens (e.g. [MUSIC]).
+        vad_filter=True,
+        # With multiple speakers, conditioning on prior text causes Whisper to
+        # "hallucinate" repetitions of previous speakers.  Turning this off makes
+        # each segment transcribed independently.
+        condition_on_previous_text=False,
+    )
     segments = list(segments)  # consume generator before opening file
 
     source_lang = info.language
@@ -85,16 +96,31 @@ def main():
         print(f"Translating {source_lang} -> {target_lang}…", file=sys.stderr)
         ensure_argos_package(source_lang, target_lang)
 
+    count = 0
     with open(output_path, "w", encoding="utf-8") as f:
-        for i, seg in enumerate(segments, 1):
+        for seg in segments:
             text = seg.text.strip()
+            # Skip noise-only tokens and empty segments produced by overlapping
+            # speakers or background sound — writing empty SRT entries causes
+            # FFmpeg to reject the subtitle track.
+            if not text:
+                continue
             if needs_argos:
-                text = translate_text(text, source_lang, target_lang)
-            f.write(f"{i}\n")
+                try:
+                    text = translate_text(text, source_lang, target_lang)
+                except Exception as e:
+                    # Keep the original segment rather than failing the whole file.
+                    print(f"WARNING: translation failed for segment, keeping original: {e}", file=sys.stderr)
+            count += 1
+            f.write(f"{count}\n")
             f.write(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n")
             f.write(f"{text}\n\n")
 
-    print(f"SRT written to {output_path}", file=sys.stderr)
+    if count == 0:
+        print("ERROR: no speech segments detected — subtitle file would be empty", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"SRT written to {output_path} ({count} segments)", file=sys.stderr)
 
 
 if __name__ == "__main__":
