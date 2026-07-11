@@ -3,11 +3,14 @@
 Run at container startup before the Node service starts.
 
 - Downloads and caches the configured Whisper model.
-- Pre-installs argostranslate language packages listed in ARGOS_PACKAGES
-  (space-separated 'from_code:to_code' pairs, e.g. "es:fr es:de es:pt").
+- Pre-installs argostranslate language packages.
 
-Both are stored in mounted volumes so downloads only happen once per volume
-lifetime, not on every container start.
+  ARGOS_PACKAGES=all          → install every en→X package available
+  ARGOS_PACKAGES=en:ar en:de  → install only the listed pairs
+  ARGOS_PACKAGES=              → skip (packages downloaded on demand)
+
+All packages are stored in the argos_packages volume so downloads only
+happen once per volume lifetime, not on every container restart.
 """
 import os
 import sys
@@ -22,44 +25,53 @@ def preload_whisper() -> None:
 
 
 def preload_argos() -> None:
+    import argostranslate.package
+    import argostranslate.translate
+
     packages_env = os.environ.get('ARGOS_PACKAGES', '').strip()
     if not packages_env:
         print('[preload] ARGOS_PACKAGES not set — skipping argostranslate pre-install.', flush=True)
         return
 
-    pairs = [p.strip() for p in packages_env.split() if ':' in p]
-    if not pairs:
-        return
-
-    import argostranslate.package
-    import argostranslate.translate
-
-    print(f"[preload] Updating argostranslate package index…", flush=True)
+    print('[preload] Updating argostranslate package index…', flush=True)
     argostranslate.package.update_package_index()
     available = argostranslate.package.get_available_packages()
 
-    for pair in pairs:
-        from_code, to_code = pair.split(':', 1)
+    if packages_env.lower() == 'all':
+        # Install every en→X package that argostranslate offers.
+        targets = [p for p in available if p.from_code == 'en']
+        print(f'[preload] Installing all {len(targets)} en→X packages…', flush=True)
+    else:
+        pairs = [p.strip() for p in packages_env.split() if ':' in p]
+        targets = []
+        for pair in pairs:
+            from_code, to_code = pair.split(':', 1)
+            pkg = next(
+                (p for p in available if p.from_code == from_code and p.to_code == to_code),
+                None,
+            )
+            if pkg is None:
+                print(f'[preload] WARNING: no argostranslate package for {pair}', flush=True)
+            else:
+                targets.append(pkg)
 
-        installed = argostranslate.translate.get_installed_languages()
-        from_lang = next((l for l in installed if l.code == from_code), None)
+    installed_langs = argostranslate.translate.get_installed_languages()
+
+    for pkg in targets:
+        pair = f"{pkg.from_code}:{pkg.to_code}"
+        from_lang = next((l for l in installed_langs if l.code == pkg.from_code), None)
         if from_lang:
-            to_lang = next((l for l in installed if l.code == to_code), None)
+            to_lang = next((l for l in installed_langs if l.code == pkg.to_code), None)
             if to_lang and from_lang.get_translation(to_lang):
                 print(f'[preload] {pair}: already installed', flush=True)
                 continue
 
-        pkg = next(
-            (p for p in available if p.from_code == from_code and p.to_code == to_code),
-            None,
-        )
-        if pkg is None:
-            print(f'[preload] WARNING: no argostranslate package for {pair}', flush=True)
-            continue
-
         print(f'[preload] Installing {pair}…', flush=True)
-        argostranslate.package.install_from_path(pkg.download())
-        print(f'[preload] {pair}: done', flush=True)
+        try:
+            argostranslate.package.install_from_path(pkg.download())
+            print(f'[preload] {pair}: done', flush=True)
+        except Exception as e:
+            print(f'[preload] WARNING: failed to install {pair}: {e}', flush=True)
 
 
 if __name__ == '__main__':

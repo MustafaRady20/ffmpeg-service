@@ -18,7 +18,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [gpu, video]
     depends_on:
       redis:
         condition: service_healthy

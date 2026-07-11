@@ -70,9 +70,12 @@ def main():
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
-    # Use Whisper's built-in translation when the target is English — avoids
-    # an argostranslate runtime download and produces higher-quality output.
-    whisper_task = "translate" if target_lang == "en" else "transcribe"
+    # When translation is requested, always use Whisper's native task='translate'
+    # to produce English text first.  This avoids needing a direct
+    # source_lang → target_lang argostranslate package (e.g. es→ar), which often
+    # doesn't exist.  We only ever need en→target_lang packages, which are widely
+    # available.  For English targets, we're done after this step.
+    whisper_task = "translate" if target_lang else "transcribe"
     segments, info = model.transcribe(
         audio_path,
         beam_size=5,
@@ -90,11 +93,12 @@ def main():
     source_lang = info.language
     print(f"Detected language: {source_lang} (task={whisper_task})", file=sys.stderr)
 
-    # For non-English targets we still need argostranslate.
-    needs_argos = target_lang and target_lang != "en" and target_lang != source_lang
+    # Argostranslate step: only needed when target is something other than English
+    # (Whisper already produced English above).  Always translate FROM English.
+    needs_argos = bool(target_lang and target_lang != "en")
     if needs_argos:
-        print(f"Translating {source_lang} -> {target_lang}…", file=sys.stderr)
-        ensure_argos_package(source_lang, target_lang)
+        print(f"Translating en -> {target_lang}…", file=sys.stderr)
+        ensure_argos_package("en", target_lang)
 
     count = 0
     with open(output_path, "w", encoding="utf-8") as f:
@@ -107,7 +111,7 @@ def main():
                 continue
             if needs_argos:
                 try:
-                    text = translate_text(text, source_lang, target_lang)
+                    text = translate_text(text, "en", target_lang)
                 except Exception as e:
                     # Keep the original segment rather than failing the whole file.
                     print(f"WARNING: translation failed for segment, keeping original: {e}", file=sys.stderr)
