@@ -32,6 +32,11 @@ const MAX_UPLOAD_BYTES = Number(
   process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024,
 );
 
+// Completed jobs are kept in Redis for this long so all outputs (video +
+// optional subtitle) can be downloaded regardless of order. After expiry
+// BullMQ removes them automatically — no manual job.remove() needed.
+const JOB_TTL_SECONDS = 6 * 60 * 60; // 6 hours
+
 @Controller()
 export class CompressionController {
   constructor(
@@ -76,12 +81,19 @@ export class CompressionController {
       throw new BadRequestException('No file uploaded under form field "video"');
     }
 
-    const job = await this.queue.add('compress', {
-      inputPath: file.path,
-      originalName: file.originalname,
-      generateSubtitles: generateSubtitles === 'true',
-      subtitleLanguage: subtitleLanguage || undefined,
-    });
+    const job = await this.queue.add(
+      'compress',
+      {
+        inputPath: file.path,
+        originalName: file.originalname,
+        generateSubtitles: generateSubtitles === 'true',
+        subtitleLanguage: subtitleLanguage || undefined,
+      },
+      {
+        removeOnComplete: { age: JOB_TTL_SECONDS },
+        removeOnFail: { age: 24 * 60 * 60 }, // keep failed jobs 24 h for debugging
+      },
+    );
 
     return { jobId: job.id! };
   }
@@ -111,7 +123,7 @@ export class CompressionController {
       throw new BadRequestException(`Job is not ready (status: ${state})`);
     }
 
-    const { servePath, discardPath, serveSize, originalName, subtitlePath } =
+    const { servePath, discardPath, serveSize, originalName } =
       job.returnvalue as CompressionJobResult;
 
     const baseName = originalName.replace(/\.[^.]+$/, '');
@@ -125,10 +137,8 @@ export class CompressionController {
     stream.on('close', () => {
       unlink(servePath).catch(() => undefined);
       unlink(discardPath).catch(() => undefined);
-      // Only remove the job (and subtitle file) here when there is no subtitle
-      // to download separately. If a subtitle exists, the subtitle endpoint
-      // owns the final cleanup so it remains accessible after this download.
-      if (!subtitlePath) job.remove().catch(() => undefined);
+      // Job is cleaned up automatically via removeOnComplete TTL — no manual
+      // removal here so the subtitle endpoint can still be called after this.
     });
 
     return new StreamableFile(stream);
@@ -160,7 +170,7 @@ export class CompressionController {
     const srtStream = createReadStream(subtitlePath);
     srtStream.on('close', () => {
       unlink(subtitlePath).catch(() => undefined);
-      job.remove().catch(() => undefined);
+      // Job is cleaned up automatically via removeOnComplete TTL.
     });
 
     return new StreamableFile(srtStream);

@@ -26,4 +26,4 @@ VOLUME ["/root/.local/share/argos-translate"]
 EXPOSE 7000
 # preload.py warms the Whisper model and any ARGOS_PACKAGES before the
 # Node service starts accepting requests.
-CMD ["sh", "-c", "python3 /app/scripts/preload.py && node dist/main"]
+CMD ["sh", "-c", "python3 /app/scripts/preload.py; node dist/main"]

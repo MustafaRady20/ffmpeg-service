@@ -65,7 +65,12 @@ def preload_argos() -> None:
 if __name__ == '__main__':
     try:
         preload_whisper()
+    except Exception as e:
+        # Non-fatal: Whisper will download the model on first use instead.
+        print(f'[preload] WARNING: Whisper pre-warm failed ({e})', file=sys.stderr, flush=True)
+
+    try:
         preload_argos()
     except Exception as e:
-        print(f'[preload] ERROR: {e}', file=sys.stderr, flush=True)
-        sys.exit(1)
+        # Non-fatal: packages will be downloaded on demand instead.
+        print(f'[preload] WARNING: argostranslate pre-install failed ({e})', file=sys.stderr, flush=True)
