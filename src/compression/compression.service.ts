@@ -29,6 +29,7 @@ export class CompressionService {
     generateSubtitles = false,
     onProgress?: (pct: number) => void,
     subtitleLanguage?: string,
+    diarize = false,
   ): Promise<{ outputPath: string; subtitlePath?: string }> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
@@ -50,7 +51,7 @@ export class CompressionService {
 
     if (generateSubtitles) {
       try {
-        return await this.addGeneratedSubtitles(outputPath, subtitleLanguage);
+        return await this.addGeneratedSubtitles(outputPath, subtitleLanguage, diarize);
       } catch (err) {
         this.logger.warn(
           `Subtitle generation failed, returning video without subtitles: ${err}`,
@@ -61,8 +62,10 @@ export class CompressionService {
     return { outputPath };
   }
 
-  private async addGeneratedSubtitles(videoPath: string, targetLanguage?: string): Promise<{ outputPath: string; subtitlePath: string }> {
-    const audioPath = join(OUTPUT_DIR, `${randomUUID()}.mp3`);
+  private async addGeneratedSubtitles(videoPath: string, targetLanguage?: string, diarize = false): Promise<{ outputPath: string; subtitlePath: string }> {
+    // WAV (16 kHz mono) is required by pyannote for diarization and works
+    // equally well for Whisper transcription.
+    const audioPath = join(OUTPUT_DIR, `${randomUUID()}.wav`);
     const srtPath   = join(OUTPUT_DIR, `${randomUUID()}.srt`);
     const finalPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
@@ -70,12 +73,12 @@ export class CompressionService {
       this.logger.log('Extracting audio for transcription…');
       await this.runFfmpeg([
         '-i', videoPath,
-        '-vn', '-ar', '16000', '-ac', '1', '-b:a', '16k',
+        '-vn', '-ar', '16000', '-ac', '1',
         '-y', audioPath,
       ]);
 
       this.logger.log('Transcribing audio with local Whisper…');
-      await this.runWhisper(audioPath, srtPath, targetLanguage);
+      await this.runWhisper(audioPath, srtPath, targetLanguage, diarize);
 
       this.logger.log('Muxing subtitle track into video…');
       await this.runFfmpeg([
@@ -98,10 +101,12 @@ export class CompressionService {
     }
   }
 
-  private runWhisper(audioPath: string, srtPath: string, targetLanguage?: string): Promise<void> {
+  private runWhisper(audioPath: string, srtPath: string, targetLanguage?: string, diarize = false): Promise<void> {
     const model = process.env.WHISPER_MODEL ?? 'small';
     const script = resolve(__dirname, '../../scripts/whisper_srt.py');
-    const args = [script, audioPath, srtPath, model, ...(targetLanguage ? [targetLanguage] : [])];
+    // Always pass targetLanguage as positional arg (empty string = no translation)
+    // so the optional diarize flag stays in a fixed position.
+    const args = [script, audioPath, srtPath, model, targetLanguage ?? '', ...(diarize ? ['diarize'] : [])];
 
     return new Promise<void>((resolve, reject) => {
       const py = spawn('python3', args);

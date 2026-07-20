@@ -3,7 +3,8 @@
 Usage: python3 whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang]
 
 Transcribes audio using faster-whisper and writes an SRT subtitle file.
-Optionally translates subtitles to target_lang using argostranslate (e.g. 'de', 'fr', 'es').
+Optionally translates subtitles to target_lang using the DeepL API (e.g. 'de', 'fr', 'es').
+Requires DEEPL_API_KEY env var. Free-tier keys end in ':fx'.
 Model sizes: tiny, base, small (default), medium, large-v3
 """
 import sys
@@ -18,68 +19,95 @@ def format_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def ensure_argos_package(from_code: str, to_code: str) -> None:
-    import argostranslate.package
-    import argostranslate.translate
-
-    installed = argostranslate.translate.get_installed_languages()
-    from_lang = next((l for l in installed if l.code == from_code), None)
-    if from_lang:
-        to_lang = next((l for l in installed if l.code == to_code), None)
-        if to_lang and from_lang.get_translation(to_lang):
-            return  # already installed
-
-    print(f"Downloading Argos Translate package {from_code} -> {to_code}…", file=sys.stderr)
-    argostranslate.package.update_package_index()
-    available = argostranslate.package.get_available_packages()
-    pkg = next(
-        (p for p in available if p.from_code == from_code and p.to_code == to_code),
-        None,
-    )
-    if pkg is None:
-        raise RuntimeError(
-            f"No Argos Translate package available for {from_code} -> {to_code}. "
-            "See https://www.argosopentech.com/argospm/index/ for supported pairs."
-        )
-    argostranslate.package.install_from_path(pkg.download())
-
-
 def translate_text(text: str, from_code: str, to_code: str) -> str:
-    import argostranslate.translate
+    import os, urllib.request, urllib.parse, json
 
-    installed = argostranslate.translate.get_installed_languages()
-    from_lang = next((l for l in installed if l.code == from_code), None)
-    to_lang = next((l for l in installed if l.code == to_code), None)
-    if not from_lang or not to_lang:
-        raise RuntimeError(f"Language not available after install: {from_code} or {to_code}")
-    translation = from_lang.get_translation(to_lang)
-    if not translation:
-        raise RuntimeError(f"No translation object for {from_code} -> {to_code}")
-    return translation.translate(text)
+    api_key = os.environ.get("DEEPL_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("DEEPL_API_KEY environment variable is required for translation")
+
+    # Free-tier keys end in ':fx' and use a different host
+    base = "https://api-free.deepl.com" if api_key.endswith(":fx") else "https://api.deepl.com"
+    url = f"{base}/v2/translate"
+
+    payload = urllib.parse.urlencode({
+        "auth_key": api_key,
+        "text": text,
+        "source_lang": from_code.upper(),
+        "target_lang": to_code.upper(),
+    }).encode()
+
+    req = urllib.request.Request(url, data=payload, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    return data["translations"][0]["text"]
+
+
+def run_diarization(audio_path: str):
+    """
+    Run pyannote speaker diarization.
+    Requires HF_TOKEN env var and the model terms accepted at:
+    https://huggingface.co/pyannote/speaker-diarization-3.1
+    """
+    import os
+    hf_token = os.environ.get('HF_TOKEN', '').strip()
+    if not hf_token:
+        raise RuntimeError(
+            "HF_TOKEN environment variable is required for speaker diarization. "
+            "Get a token at https://huggingface.co/settings/tokens and accept the "
+            "pyannote/speaker-diarization-3.1 model terms at "
+            "https://huggingface.co/pyannote/speaker-diarization-3.1"
+        )
+    from pyannote.audio import Pipeline
+    import torch
+    print("Loading speaker diarization model…", file=sys.stderr)
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1",
+        use_auth_token=hf_token,
+    )
+    pipeline.to(torch.device("cpu"))
+    print("Running diarization…", file=sys.stderr)
+    return pipeline(audio_path)
+
+
+def get_speaker(start: float, end: float, diarization) -> str | None:
+    """Return the speaker with the most overlap in the segment [start, end]."""
+    totals: dict[str, float] = {}
+    for turn, _, speaker in diarization.itertracks(yield_label=True):
+        overlap = min(end, turn.end) - max(start, turn.start)
+        if overlap > 0:
+            totals[speaker] = totals.get(speaker, 0.0) + overlap
+    return max(totals, key=totals.get) if totals else None
+
+
+def speaker_label(speaker_id: str) -> str:
+    """Convert SPEAKER_00 → Speaker 1, SPEAKER_01 → Speaker 2, etc."""
+    try:
+        return f"Speaker {int(speaker_id.split('_')[-1]) + 1}"
+    except (ValueError, IndexError):
+        return speaker_id
 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang]", file=sys.stderr)
+        print("Usage: whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang] [diarize]", file=sys.stderr)
         sys.exit(1)
 
     audio_path  = sys.argv[1]
     output_path = sys.argv[2]
     model_size  = sys.argv[3] if len(sys.argv) > 3 else "small"
-    target_lang = sys.argv[4] if len(sys.argv) > 4 else None
+    target_lang = (sys.argv[4] if len(sys.argv) > 4 else None) or None  # empty string → None
+    diarize     = len(sys.argv) > 5 and sys.argv[5] == "diarize"
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
-    # When translation is requested, always use Whisper's native task='translate'
-    # to produce English text first.  This avoids needing a direct
-    # source_lang → target_lang argostranslate package (e.g. es→ar), which often
-    # doesn't exist.  We only ever need en→target_lang packages, which are widely
-    # available.  For English targets, we're done after this step.
-    whisper_task = "translate" if target_lang else "transcribe"
+    # Always transcribe in the source language so Whisper preserves the original text.
+    # DeepL then handles source_lang → target_lang directly, which is more accurate
+    # than going through an English intermediate step.
     segments, info = model.transcribe(
         audio_path,
         beam_size=5,
-        task=whisper_task,
+        task="transcribe",
         # vad_filter removes silence / noise between speakers so Whisper doesn't
         # waste segments on gaps or produce noise-only tokens (e.g. [MUSIC]).
         vad_filter=True,
@@ -91,14 +119,15 @@ def main():
     segments = list(segments)  # consume generator before opening file
 
     source_lang = info.language
-    print(f"Detected language: {source_lang} (task={whisper_task})", file=sys.stderr)
+    print(f"Detected language: {source_lang}", file=sys.stderr)
 
-    # Argostranslate step: only needed when target is something other than English
-    # (Whisper already produced English above).  Always translate FROM English.
-    needs_argos = bool(target_lang and target_lang != "en")
-    if needs_argos:
-        print(f"Translating en -> {target_lang}…", file=sys.stderr)
-        ensure_argos_package("en", target_lang)
+    needs_translation = bool(target_lang and target_lang != source_lang)
+    if needs_translation:
+        print(f"Translating {source_lang} -> {target_lang} via DeepL…", file=sys.stderr)
+
+    diarization = None
+    if diarize:
+        diarization = run_diarization(audio_path)
 
     count = 0
     with open(output_path, "w", encoding="utf-8") as f:
@@ -109,12 +138,16 @@ def main():
             # FFmpeg to reject the subtitle track.
             if not text:
                 continue
-            if needs_argos:
+            if needs_translation:
                 try:
-                    text = translate_text(text, "en", target_lang)
+                    text = translate_text(text, source_lang, target_lang)
                 except Exception as e:
                     # Keep the original segment rather than failing the whole file.
                     print(f"WARNING: translation failed for segment, keeping original: {e}", file=sys.stderr)
+            if diarization is not None:
+                spk = get_speaker(seg.start, seg.end, diarization)
+                if spk:
+                    text = f"[{speaker_label(spk)}] {text}"
             count += 1
             f.write(f"{count}\n")
             f.write(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n")

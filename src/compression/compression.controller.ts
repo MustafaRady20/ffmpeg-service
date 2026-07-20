@@ -76,6 +76,7 @@ export class CompressionController {
     @UploadedFile() file: Express.Multer.File,
     @Body('generateSubtitles') generateSubtitles?: string,
     @Body('subtitleLanguage') subtitleLanguage?: string,
+    @Body('diarize') diarize?: string,
   ): Promise<{ jobId: string }> {
     if (!file) {
       throw new BadRequestException('No file uploaded under form field "video"');
@@ -88,6 +89,7 @@ export class CompressionController {
         originalName: file.originalname,
         generateSubtitles: generateSubtitles === 'true',
         subtitleLanguage: subtitleLanguage || undefined,
+        diarize: diarize === 'true',
       },
       {
         removeOnComplete: { age: JOB_TTL_SECONDS },
