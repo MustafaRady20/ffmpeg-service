@@ -31,13 +31,13 @@ def translate_text(text: str, from_code: str, to_code: str) -> str:
     url = f"{base}/v2/translate"
 
     payload = urllib.parse.urlencode({
-        "auth_key": api_key,
         "text": text,
         "source_lang": from_code.upper(),
         "target_lang": to_code.upper(),
     }).encode()
 
     req = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("Authorization", f"DeepL-Auth-Key {api_key}")
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read())
     return data["translations"][0]["text"]
@@ -121,7 +121,7 @@ def main():
     source_lang = info.language
     print(f"Detected language: {source_lang}", file=sys.stderr)
 
-    needs_translation = bool(target_lang and target_lang != source_lang)
+    needs_translation = bool(target_lang and target_lang.lower() != source_lang.lower())
     if needs_translation:
         print(f"Translating {source_lang} -> {target_lang} via DeepL…", file=sys.stderr)
 

@@ -112,7 +112,11 @@ export class CompressionService {
       const py = spawn('python3', args);
 
       let stderr = '';
-      py.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      py.stderr.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        stderr += text;
+        this.logger.log(text.trim());
+      });
       py.stdout.on('data', (chunk: Buffer) => { this.logger.log(chunk.toString().trim()); });
 
       py.on('error', (err) =>
