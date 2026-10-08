@@ -43,9 +43,11 @@ export class CompressionProcessor extends WorkerHost {
       stat(outputPath),
     ]);
 
-    // If subtitles were generated the output always wins (it has the subtitle track).
-    // Otherwise pick whichever file is smaller.
-    const useOutput = generateSubtitles || outStat.size < inStat.size;
+    // If subtitles were generated the output always wins (it has the subtitle
+    // track, and was already built on the smaller of the two videos).
+    // Otherwise — including when subtitle generation failed — pick whichever
+    // file is smaller.
+    const useOutput = subtitlePath !== undefined || outStat.size < inStat.size;
     const servePath = useOutput ? outputPath : inputPath;
     const discardPath = useOutput ? inputPath : outputPath;
     const serveSize = useOutput ? outStat.size : inStat.size;

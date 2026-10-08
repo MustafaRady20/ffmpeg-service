@@ -85,8 +85,9 @@ All optional — see `.env.example`. The encoding knobs:
 
 | Var | Default | Notes |
 |---|---|---|
-| `FFMPEG_CRF` | `28` | Quality/size dial. Lower = bigger + better (23-28 useful). |
-| `FFMPEG_PRESET` | `medium` | Slower preset = smaller file, more CPU. |
+| `FFMPEG_CRF` | `30` | Quality/size dial. Lower = bigger + better (23-30 useful). |
+| `FFMPEG_PRESET` | `slow` | Slower preset = smaller file, more CPU. |
+| `FFMPEG_MAX_BITRATE_RATIO` | `0.75` | Caps video bitrate at this fraction of the source's so the output is always smaller. `0` disables. |
 | `FFMPEG_VCODEC` | `libx264` | `libx265` for ~40-50% smaller (slower); `h264_nvenc` for GPU. |
 | `MAX_UPLOAD_BYTES` | `5368709120` | 5 GB upload cap. |
 
