@@ -23,7 +23,7 @@ export class CompressionProcessor extends WorkerHost {
     const { inputPath, originalName, generateSubtitles, subtitleLanguage, diarize } = job.data;
     this.logger.log(`[job ${job.id}] starting encode for ${originalName}`);
 
-    let result: { outputPath: string; subtitlePath?: string };
+    let result: { outputPath: string; subtitlePath?: string; translatedSubtitlePath?: string };
     try {
       result = await this.compression.compress(
         inputPath,
@@ -37,7 +37,7 @@ export class CompressionProcessor extends WorkerHost {
       throw err;
     }
 
-    const { outputPath, subtitlePath } = result;
+    const { outputPath, subtitlePath, translatedSubtitlePath } = result;
     const [inStat, outStat] = await Promise.all([
       stat(inputPath),
       stat(outputPath),
@@ -56,6 +56,6 @@ export class CompressionProcessor extends WorkerHost {
       `[job ${job.id}] done — serving ${servePath} (${serveSize} bytes)`,
     );
 
-    return { servePath, discardPath, serveSize, originalName, subtitlePath };
+    return { servePath, discardPath, serveSize, originalName, subtitlePath, translatedSubtitlePath };
   }
 }

@@ -52,7 +52,7 @@ export class CompressionService {
     onProgress?: (pct: number) => void,
     subtitleLanguage?: string,
     diarize = false,
-  ): Promise<{ outputPath: string; subtitlePath?: string }> {
+  ): Promise<{ outputPath: string; subtitlePath?: string; translatedSubtitlePath?: string }> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
     const source = await this.probeSource(inputPath);
@@ -111,11 +111,13 @@ export class CompressionService {
     encodedPath: string,
     targetLanguage?: string,
     diarize = false,
-  ): Promise<{ outputPath: string; subtitlePath: string }> {
+  ): Promise<{ outputPath: string; subtitlePath: string; translatedSubtitlePath?: string }> {
     // WAV (16 kHz mono) is required by pyannote for diarization and works
     // equally well for Whisper transcription.
     const audioPath = join(OUTPUT_DIR, `${randomUUID()}.wav`);
     const srtPath   = join(OUTPUT_DIR, `${randomUUID()}.srt`);
+    // Only written when a translation is requested and the spoken language differs.
+    const translatedSrtPath = join(OUTPUT_DIR, `${randomUUID()}.translated.srt`);
 
     try {
       this.logger.log('Extracting audio for transcription…');
@@ -126,7 +128,11 @@ export class CompressionService {
       ]);
 
       this.logger.log('Transcribing audio with local Whisper…');
-      await this.runWhisper(audioPath, srtPath, targetLanguage, diarize);
+      await this.runWhisper(audioPath, srtPath, translatedSrtPath, targetLanguage, diarize);
+      const hasTranslation = await stat(translatedSrtPath).then(() => true, () => false);
+      const tracks = hasTranslation
+        ? [{ path: srtPath, title: 'Original' }, { path: translatedSrtPath, title: `Translated (${targetLanguage})` }]
+        : [{ path: srtPath, title: 'Original' }];
 
       // The subtitle track must not force a bigger file than the upload: if
       // the encode failed to shrink it, carry the subtitles on the original
@@ -134,21 +140,32 @@ export class CompressionService {
       const [inStat, encStat] = await Promise.all([stat(inputPath), stat(encodedPath)]);
       const bases =
         encStat.size < inStat.size ? [encodedPath] : [inputPath, encodedPath];
-      const finalPath = await this.muxSubtitles(bases, srtPath);
+      const finalPath = await this.muxSubtitles(bases, tracks);
 
       await unlink(encodedPath).catch(() => undefined);
-      // srtPath is intentionally kept — caller will serve and clean it up
-      return { outputPath: finalPath, subtitlePath: srtPath };
+      // The SRT files are intentionally kept — caller will serve and clean them up
+      return {
+        outputPath: finalPath,
+        subtitlePath: srtPath,
+        translatedSubtitlePath: hasTranslation ? translatedSrtPath : undefined,
+      };
     } catch (err) {
       await unlink(srtPath).catch(() => undefined);
+      await unlink(translatedSrtPath).catch(() => undefined);
       throw err;
     } finally {
       await unlink(audioPath).catch(() => undefined);
     }
   }
 
-  // Muxes the subtitle track into the first base video that accepts it.
-  private async muxSubtitles(bases: string[], srtPath: string): Promise<string> {
+  // Muxes the subtitle tracks into the first base video that accepts them.
+  private async muxSubtitles(
+    bases: string[],
+    tracks: { path: string; title: string }[],
+  ): Promise<string> {
+    const inputs = tracks.flatMap((t) => ['-i', t.path]);
+    const maps = tracks.flatMap((_, i) => ['-map', `${i + 1}:0`]);
+    const titles = tracks.flatMap((t, i) => [`-metadata:s:s:${i}`, `title=${t.title}`]);
     let lastErr: unknown;
     for (const videoPath of bases) {
       const finalPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
@@ -156,11 +173,12 @@ export class CompressionService {
         this.logger.log(`Muxing subtitle track into ${videoPath}…`);
         await this.runFfmpeg([
           '-i', videoPath,
-          '-i', srtPath,
-          '-map', '0:v:0', '-map', '0:a:0?', '-map', '1:0',
+          ...inputs,
+          '-map', '0:v:0', '-map', '0:a:0?', ...maps,
           '-c:v', 'copy',
           '-c:a', 'copy',
           '-c:s', 'mov_text',
+          ...titles,
           '-movflags', '+faststart',
           '-y', finalPath,
         ]);
@@ -210,12 +228,24 @@ export class CompressionService {
     });
   }
 
-  private runWhisper(audioPath: string, srtPath: string, targetLanguage?: string, diarize = false): Promise<void> {
+  private runWhisper(
+    audioPath: string,
+    srtPath: string,
+    translatedSrtPath: string,
+    targetLanguage?: string,
+    diarize = false,
+  ): Promise<void> {
     const model = process.env.WHISPER_MODEL ?? 'small';
     const script = resolve(__dirname, '../../scripts/whisper_srt.py');
-    // Always pass targetLanguage as positional arg (empty string = no translation)
-    // so the optional diarize flag stays in a fixed position.
-    const args = [script, audioPath, srtPath, model, targetLanguage ?? '', ...(diarize ? ['diarize'] : [])];
+    // Always pass targetLanguage and the translated path as positional args
+    // (empty string = no translation) so the optional diarize flag stays in a
+    // fixed position.
+    const args = [
+      script, audioPath, srtPath, model,
+      targetLanguage ?? '',
+      targetLanguage ? translatedSrtPath : '',
+      ...(diarize ? ['diarize'] : []),
+    ];
 
     return new Promise<void>((resolve, reject) => {
       const py = spawn('python3', args);

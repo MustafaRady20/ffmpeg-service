@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Usage: python3 whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang]
+Usage: python3 whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang] [translated_srt_path] [diarize]
 
-Transcribes audio using faster-whisper and writes an SRT subtitle file.
-Optionally translates subtitles to target_lang using the DeepL API (e.g. 'de', 'fr', 'es').
+Transcribes audio using faster-whisper and writes an SRT subtitle file in the
+spoken language. If target_lang is given (e.g. 'de', 'fr', 'es') and differs
+from the spoken language, a second SRT translated via the DeepL API is written
+to translated_srt_path; the original file is always kept.
 Requires DEEPL_API_KEY env var. Free-tier keys end in ':fx'.
 Model sizes: tiny, base, small (default), medium, large-v3
 """
@@ -88,16 +90,25 @@ def speaker_label(speaker_id: str) -> str:
         return speaker_id
 
 
+def write_srt(path: str, cues) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for i, (start, end, text) in enumerate(cues, 1):
+            f.write(f"{i}\n")
+            f.write(f"{format_timestamp(start)} --> {format_timestamp(end)}\n")
+            f.write(f"{text}\n\n")
+
+
 def main():
     if len(sys.argv) < 3:
-        print("Usage: whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang] [diarize]", file=sys.stderr)
+        print("Usage: whisper_srt.py <audio_path> <srt_output_path> [model_size] [target_lang] [translated_srt_path] [diarize]", file=sys.stderr)
         sys.exit(1)
 
     audio_path  = sys.argv[1]
     output_path = sys.argv[2]
     model_size  = sys.argv[3] if len(sys.argv) > 3 else "small"
     target_lang = (sys.argv[4] if len(sys.argv) > 4 else None) or None  # empty string → None
-    diarize     = len(sys.argv) > 5 and sys.argv[5] == "diarize"
+    translated_path = (sys.argv[5] if len(sys.argv) > 5 else None) or None
+    diarize     = len(sys.argv) > 6 and sys.argv[6] == "diarize"
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
@@ -121,7 +132,9 @@ def main():
     source_lang = info.language
     print(f"Detected language: {source_lang}", file=sys.stderr)
 
-    needs_translation = bool(target_lang and target_lang.lower() != source_lang.lower())
+    needs_translation = bool(
+        target_lang and translated_path and target_lang.lower() != source_lang.lower()
+    )
     if needs_translation:
         print(f"Translating {source_lang} -> {target_lang} via DeepL…", file=sys.stderr)
 
@@ -129,35 +142,40 @@ def main():
     if diarize:
         diarization = run_diarization(audio_path)
 
-    count = 0
-    with open(output_path, "w", encoding="utf-8") as f:
-        for seg in segments:
-            text = seg.text.strip()
-            # Skip noise-only tokens and empty segments produced by overlapping
-            # speakers or background sound — writing empty SRT entries causes
-            # FFmpeg to reject the subtitle track.
-            if not text:
-                continue
-            if needs_translation:
-                try:
-                    text = translate_text(text, source_lang, target_lang)
-                except Exception as e:
-                    # Keep the original segment rather than failing the whole file.
-                    print(f"WARNING: translation failed for segment, keeping original: {e}", file=sys.stderr)
-            if diarization is not None:
-                spk = get_speaker(seg.start, seg.end, diarization)
-                if spk:
-                    text = f"[{speaker_label(spk)}] {text}"
-            count += 1
-            f.write(f"{count}\n")
-            f.write(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n")
-            f.write(f"{text}\n\n")
+    # (start, end, speaker prefix, original text, translated text or None)
+    entries = []
+    for seg in segments:
+        text = seg.text.strip()
+        # Skip noise-only tokens and empty segments produced by overlapping
+        # speakers or background sound — writing empty SRT entries causes
+        # FFmpeg to reject the subtitle track.
+        if not text:
+            continue
+        translated = None
+        if needs_translation:
+            try:
+                translated = translate_text(text, source_lang, target_lang)
+            except Exception as e:
+                # Keep the original segment rather than failing the whole file.
+                print(f"WARNING: translation failed for segment, keeping original: {e}", file=sys.stderr)
+                translated = text
+        prefix = ""
+        if diarization is not None:
+            spk = get_speaker(seg.start, seg.end, diarization)
+            if spk:
+                prefix = f"[{speaker_label(spk)}] "
+        entries.append((seg.start, seg.end, prefix, text, translated))
 
-    if count == 0:
+    if not entries:
         print("ERROR: no speech segments detected — subtitle file would be empty", file=sys.stderr)
         sys.exit(1)
 
-    print(f"SRT written to {output_path} ({count} segments)", file=sys.stderr)
+    write_srt(output_path, [(s, e, p + orig) for s, e, p, orig, _ in entries])
+    print(f"SRT written to {output_path} ({len(entries)} segments)", file=sys.stderr)
+
+    if needs_translation:
+        write_srt(translated_path, [(s, e, p + tr) for s, e, p, _, tr in entries])
+        print(f"Translated SRT written to {translated_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

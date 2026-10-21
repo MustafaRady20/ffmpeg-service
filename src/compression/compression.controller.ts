@@ -7,6 +7,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Res,
   StreamableFile,
   UploadedFile,
@@ -150,6 +151,8 @@ export class CompressionController {
   async subtitle(
     @Param('id') id: string,
     @Res({ passthrough: true }) res: Response,
+    // 'original' (default) = spoken language, 'translated' = DeepL translation
+    @Query('track') track?: string,
   ): Promise<StreamableFile> {
     const job = await this.queue.getJob(id);
     if (!job) throw new NotFoundException(`Job ${id} not found`);
@@ -159,14 +162,23 @@ export class CompressionController {
       throw new BadRequestException(`Job is not ready (status: ${state})`);
     }
 
-    const { subtitlePath } = job.returnvalue as CompressionJobResult;
+    if (track && track !== 'original' && track !== 'translated') {
+      throw new BadRequestException('track must be "original" or "translated"');
+    }
+    const translated = track === 'translated';
+    const result = job.returnvalue as CompressionJobResult;
+    const subtitlePath = translated ? result.translatedSubtitlePath : result.subtitlePath;
     if (!subtitlePath) {
-      throw new NotFoundException('No subtitle was generated for this job');
+      throw new NotFoundException(
+        translated
+          ? 'No translated subtitle was generated for this job'
+          : 'No subtitle was generated for this job',
+      );
     }
 
     res.set({
       'Content-Type': 'text/plain; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="subtitle.srt"',
+      'Content-Disposition': `attachment; filename="${translated ? 'subtitle.translated' : 'subtitle'}.srt"`,
     });
 
     const srtStream = createReadStream(subtitlePath);

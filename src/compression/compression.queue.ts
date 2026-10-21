@@ -14,4 +14,5 @@ export interface CompressionJobResult {
   serveSize: number;
   originalName: string;
   subtitlePath?: string;
+  translatedSubtitlePath?: string;
 }
