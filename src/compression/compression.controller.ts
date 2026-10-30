@@ -77,6 +77,8 @@ export class CompressionController {
     @UploadedFile() file: Express.Multer.File,
     @Body('generateSubtitles') generateSubtitles?: string,
     @Body('subtitleLanguage') subtitleLanguage?: string,
+    // Spoken language (e.g. 'ja'). Omit to auto-detect.
+    @Body('sourceLanguage') sourceLanguage?: string,
     @Body('diarize') diarize?: string,
   ): Promise<{ jobId: string }> {
     if (!file) {
@@ -90,6 +92,7 @@ export class CompressionController {
         originalName: file.originalname,
         generateSubtitles: generateSubtitles === 'true',
         subtitleLanguage: subtitleLanguage || undefined,
+        sourceLanguage: sourceLanguage || undefined,
         diarize: diarize === 'true',
       },
       {

@@ -52,6 +52,7 @@ export class CompressionService {
     onProgress?: (pct: number) => void,
     subtitleLanguage?: string,
     diarize = false,
+    sourceLanguage?: string,
   ): Promise<{ outputPath: string; subtitlePath?: string; translatedSubtitlePath?: string }> {
     const outputPath = join(OUTPUT_DIR, `${randomUUID()}.mp4`);
 
@@ -95,7 +96,7 @@ export class CompressionService {
 
     if (generateSubtitles) {
       try {
-        return await this.addGeneratedSubtitles(inputPath, outputPath, subtitleLanguage, diarize);
+        return await this.addGeneratedSubtitles(inputPath, outputPath, subtitleLanguage, diarize, sourceLanguage);
       } catch (err) {
         this.logger.warn(
           `Subtitle generation failed, returning video without subtitles: ${err}`,
@@ -111,6 +112,7 @@ export class CompressionService {
     encodedPath: string,
     targetLanguage?: string,
     diarize = false,
+    sourceLanguage?: string,
   ): Promise<{ outputPath: string; subtitlePath: string; translatedSubtitlePath?: string }> {
     // WAV (16 kHz mono) is required by pyannote for diarization and works
     // equally well for Whisper transcription.
@@ -128,7 +130,7 @@ export class CompressionService {
       ]);
 
       this.logger.log('Transcribing audio with local Whisper…');
-      await this.runWhisper(audioPath, srtPath, translatedSrtPath, targetLanguage, diarize);
+      await this.runWhisper(audioPath, srtPath, translatedSrtPath, targetLanguage, diarize, sourceLanguage);
       const hasTranslation = await stat(translatedSrtPath).then(() => true, () => false);
       const tracks = hasTranslation
         ? [{ path: srtPath, title: 'Original' }, { path: translatedSrtPath, title: `Translated (${targetLanguage})` }]
@@ -234,6 +236,7 @@ export class CompressionService {
     translatedSrtPath: string,
     targetLanguage?: string,
     diarize = false,
+    sourceLanguage?: string,
   ): Promise<void> {
     const model = process.env.WHISPER_MODEL ?? 'small';
     const script = resolve(__dirname, '../../scripts/whisper_srt.py');
@@ -248,7 +251,11 @@ export class CompressionService {
     ];
 
     return new Promise<void>((resolve, reject) => {
-      const py = spawn('python3', args);
+      // A per-request spoken language overrides the WHISPER_LANGUAGE default.
+      const env = sourceLanguage
+        ? { ...process.env, WHISPER_LANGUAGE: sourceLanguage }
+        : process.env;
+      const py = spawn('python3', args, { env });
 
       let stderr = '';
       py.stderr.on('data', (chunk: Buffer) => {

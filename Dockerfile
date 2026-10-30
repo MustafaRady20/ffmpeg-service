@@ -5,7 +5,15 @@ RUN apt-get update \
     && pip3 install --no-cache-dir --break-system-packages \
        faster-whisper \
        pyannote.audio \
+       nvidia-cublas-cu12 \
+       "nvidia-cudnn-cu12>=9,<10" \
     && rm -rf /var/lib/apt/lists/*
+
+# faster-whisper (CTranslate2) needs CUDA 12 cuBLAS + cuDNN 9 on the GPU. The
+# pip wheels above ship them, but not on the loader path, so register them.
+RUN python3 -c "import nvidia.cublas.lib as a, nvidia.cudnn.lib as b; print(list(a.__path__)[0]); print(list(b.__path__)[0])" \
+       > /etc/ld.so.conf.d/nvidia-pip.conf \
+    && ldconfig
 
 WORKDIR /app
 

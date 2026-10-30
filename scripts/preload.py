@@ -12,9 +12,12 @@ import sys
 def preload_whisper() -> None:
     model_size = os.environ.get('WHISPER_MODEL', 'small')
     print(f"[preload] Warming Whisper model '{model_size}'…", flush=True)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from whisper_srt import resolve_device
     from faster_whisper import WhisperModel
-    WhisperModel(model_size, device='cpu', compute_type='int8')
-    print('[preload] Whisper model ready.', flush=True)
+    device, compute_type = resolve_device()
+    WhisperModel(model_size, device=device, compute_type=compute_type)
+    print(f'[preload] Whisper model ready on {device} ({compute_type}).', flush=True)
 
 
 if __name__ == '__main__':

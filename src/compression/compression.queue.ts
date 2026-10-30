@@ -5,6 +5,7 @@ export interface CompressionJobData {
   originalName: string;
   generateSubtitles?: boolean;
   subtitleLanguage?: string;
+  sourceLanguage?: string;
   diarize?: boolean;
 }
 
