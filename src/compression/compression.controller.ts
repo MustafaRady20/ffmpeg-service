@@ -6,6 +6,7 @@ import {
   HttpCode,
   NotFoundException,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   Res,
@@ -38,6 +39,9 @@ const MAX_UPLOAD_BYTES = Number(
 // optional subtitle) can be downloaded regardless of order. After expiry
 // BullMQ removes them automatically — no manual job.remove() needed.
 const JOB_TTL_SECONDS = 6 * 60 * 60; // 6 hours
+
+// Job IDs are random UUIDs; anything else is rejected before touching Redis.
+const JOB_ID_PIPE = new ParseUUIDPipe({ version: '4' });
 
 @Controller()
 export class CompressionController {
@@ -98,6 +102,9 @@ export class CompressionController {
         diarize: diarize === 'true',
       },
       {
+        // BullMQ's default IDs count up (1, 2, 3…), so anyone could guess
+        // other jobs' IDs and fetch their videos. A random UUID can't be guessed.
+        jobId: randomUUID(),
         removeOnComplete: { age: JOB_TTL_SECONDS },
         removeOnFail: { age: 24 * 60 * 60 }, // keep failed jobs 24 h for debugging
       },
@@ -107,7 +114,7 @@ export class CompressionController {
   }
 
   @Get('jobs/:id/status')
-  async status(@Param('id') id: string) {
+  async status(@Param('id', JOB_ID_PIPE) id: string) {
     const job = await this.queue.getJob(id);
     if (!job) throw new NotFoundException(`Job ${id} not found`);
 
@@ -120,7 +127,7 @@ export class CompressionController {
 
   @Get('jobs/:id/download')
   async download(
-    @Param('id') id: string,
+    @Param('id', JOB_ID_PIPE) id: string,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const job = await this.queue.getJob(id);
@@ -154,7 +161,7 @@ export class CompressionController {
 
   @Get('jobs/:id/subtitle')
   async subtitle(
-    @Param('id') id: string,
+    @Param('id', JOB_ID_PIPE) id: string,
     @Res({ passthrough: true }) res: Response,
     // 'original' (default) = spoken language, 'translated' = DeepL translation
     @Query('track') track?: string,
