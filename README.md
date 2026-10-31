@@ -10,7 +10,12 @@ NestJS wrapper around it.
 
 - `POST /compress` — multipart upload (field name `video`), returns the
   compressed `video/mp4` in the response body.
-- `GET /health` — liveness check.
+- `GET /health` — liveness check (no key needed).
+
+Every endpoint except `/health` requires an `X-API-Key` header matching
+`COMPRESSOR_API_KEY`; requests without it get `401`. The service refuses to
+start if the key is unset or shorter than 32 characters
+(`openssl rand -hex 32`).
 - Uploads stream to disk (never buffered in memory), so multi-GB files are fine.
 - If the compressed result isn't actually smaller, the original is returned
   instead — the caller never gets a bigger file back.
@@ -50,6 +55,7 @@ Quick test with curl:
 
 ```bash
 curl -X POST http://localhost:3000/compress \
+  -H "X-API-Key: $COMPRESSOR_API_KEY" \
   -F "video=@./big-clip.mov" \
   -o compressed.mp4
 ```
@@ -65,7 +71,7 @@ const form = new FormData();
 form.append('video', createReadStream('big-clip.mov'));
 
 const res = await axios.post('http://compressor:3000/compress', form, {
-  headers: form.getHeaders(),
+  headers: { ...form.getHeaders(), 'X-API-Key': process.env.COMPRESSOR_API_KEY },
   responseType: 'stream',          // stream the result straight to disk/storage
   maxBodyLength: Infinity,
   maxContentLength: Infinity,
@@ -85,6 +91,7 @@ All optional — see `.env.example`. The encoding knobs:
 
 | Var | Default | Notes |
 |---|---|---|
+| `COMPRESSOR_API_KEY` | — (**required**) | Shared secret clients send as `X-API-Key`. Min 32 chars. |
 | `FFMPEG_CRF` | `30` | Quality/size dial. Lower = bigger + better (23-30 useful). |
 | `FFMPEG_PRESET` | `slow` | Slower preset = smaller file, more CPU. |
 | `FFMPEG_MAX_BITRATE_RATIO` | `0.75` | Caps video bitrate at this fraction of the source's so the output is always smaller. `0` disables. |

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { BullModule } from '@nestjs/bullmq';
+import { ApiKeyGuard } from './auth/api-key.guard';
 import { CompressionModule } from './compression/compression.module';
 
 @Module({
@@ -13,5 +15,7 @@ import { CompressionModule } from './compression/compression.module';
     }),
     CompressionModule,
   ],
+  // Every route requires the API key unless marked @Public().
+  providers: [{ provide: APP_GUARD, useClass: ApiKeyGuard }],
 })
 export class AppModule {}

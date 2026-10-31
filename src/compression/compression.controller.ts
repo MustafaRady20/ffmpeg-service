@@ -22,6 +22,7 @@ import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { Queue } from 'bullmq';
 import type { Response } from 'express';
+import { Public } from '../auth/api-key.guard';
 import {
   COMPRESSION_QUEUE,
   CompressionJobData,
@@ -45,6 +46,7 @@ export class CompressionController {
     private readonly queue: Queue<CompressionJobData>,
   ) {}
 
+  @Public()
   @Get('health')
   health() {
     return { status: 'ok' };
